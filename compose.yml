@@ -1,0 +1,46 @@
+services:
+
+  postgres:
+    image: postgres:17
+    container_name: dispatchly-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: dispatchly
+      POSTGRES_PASSWORD: dispatchly_dev_password
+      POSTGRES_DB: dispatchly
+
+    ports:
+      - "5434:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dispatchly -d dispatchly"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: dispatchly-redis
+    restart: unless-stopped
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis_data:/data
+
+    command: redis-server --appendonly yes
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
