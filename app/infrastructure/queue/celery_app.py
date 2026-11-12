@@ -9,6 +9,7 @@ celery_app = Celery(
     "dispatchly",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
+    include=["app.infrastructure.queue.tasks"],
 )
 
 celery_app.conf.update(
