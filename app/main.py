@@ -1,11 +1,14 @@
 from contextlib import asynccontextmanager
 
+
 from fastapi import FastAPI, HTTPException
 from redis.asyncio import Redis
 from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.db.session import engine
+from app.api.routes.tenants import router as tenants_router
+from app.api.routes.emails import router as emails_router
 
 
 settings = get_settings()
@@ -30,6 +33,9 @@ app = FastAPI(
     description="Reliable email delivery infrastructure",
     lifespan=lifespan,
 )
+
+app.include_router(tenants_router)
+app.include_router(emails_router)
 
 
 @app.get("/health", tags=["Health"])
