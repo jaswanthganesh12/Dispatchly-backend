@@ -1,7 +1,9 @@
 
+import asyncio
 import logging
 
 from app.infrastructure.queue.celery_app import celery_app
+from app.infrastructure.queue.processor import process_email_record
 
 logger = logging.getLogger(__name__)
 
@@ -13,12 +15,19 @@ logger = logging.getLogger(__name__)
 )
 def process_email(self, email_id: str):
     logger.info(
-        "Received email processing task",
+        "Starting email processing",
         extra={"email_id": email_id},
     )
 
+    result = asyncio.run(process_email_record(email_id))
 
-    return {
-        "email_id": email_id,
-        "status": "RECEIVED",
-    }
+    logger.info(
+        "Email processing result",
+        extra=result,
+    )
+
+    return result
+
+
+
+
