@@ -1,18 +1,14 @@
 
-from typing import Annotated
 import hashlib
 import json
+from typing import Annotated
 
-from fastapi import Header
-from sqlalchemy import func
-from app.db.models import IdempotencyRecord
-
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.dependencies import get_db_session
-from app.db.models import Email, OutboxEvent, Tenant
+from app.db.models import Email, IdempotencyRecord, OutboxEvent, Tenant
 from app.schemas.email import EmailCreate, EmailResponse
 
 
@@ -20,7 +16,6 @@ router = APIRouter(
     prefix="/v1/emails",
     tags=["Emails"],
 )
-
 
 
 @router.post(
@@ -44,15 +39,15 @@ async def submit_email(
 
     if not idempotency_key:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Idempotency-Key cannot be empty",
         )
 
-  
-    payload = email_data.model_dump(mode="json")
+   
+    request_payload = email_data.model_dump(mode="json")
 
     serialized_payload = json.dumps(
-        payload,
+        request_payload,
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -63,9 +58,10 @@ async def submit_email(
 
     email_to_return = None
 
+  
     async with db.begin():
 
-       
+        # Validate tenant.
         tenant = await db.scalar(
             select(Tenant).where(
                 Tenant.id == email_data.tenant_id
@@ -74,17 +70,16 @@ async def submit_email(
 
         if tenant is None:
             raise HTTPException(
-                status_code=404,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="Tenant not found",
             )
 
         if not tenant.is_active:
             raise HTTPException(
-                status_code=403,
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail="Tenant is inactive",
             )
 
-       
         lock_key = f"{tenant.id}:{idempotency_key}"
 
         await db.execute(
@@ -98,8 +93,7 @@ async def submit_email(
         existing_record = await db.scalar(
             select(IdempotencyRecord).where(
                 IdempotencyRecord.tenant_id == tenant.id,
-                IdempotencyRecord.idempotency_key
-                == idempotency_key,
+                IdempotencyRecord.idempotency_key == idempotency_key,
             )
         )
 
@@ -107,19 +101,27 @@ async def submit_email(
 
             if existing_record.request_hash != request_hash:
                 raise HTTPException(
-                    status_code=409,
+                    status_code=status.HTTP_409_CONFLICT,
                     detail=(
                         "Idempotency key already used "
                         "with a different request payload"
                     ),
                 )
 
+       
             email_to_return = await db.get(
                 Email,
                 existing_record.email_id,
             )
 
+            if email_to_return is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Original email record not found",
+                )
+
         else:
+      
             email = Email(
                 tenant_id=tenant.id,
                 recipient_email=str(email_data.recipient_email),
@@ -133,6 +135,7 @@ async def submit_email(
 
             db.add(email)
             await db.flush()
+
             event = OutboxEvent(
                 aggregate_type="email",
                 aggregate_id=email.id,
@@ -140,6 +143,7 @@ async def submit_email(
                 payload={
                     "email_id": str(email.id),
                     "tenant_id": str(tenant.id),
+                    "priority": email.priority,
                 },
             )
 
@@ -147,7 +151,6 @@ async def submit_email(
                 event.available_at = email.scheduled_at
 
             db.add(event)
-
             idempotency_record = IdempotencyRecord(
                 tenant_id=tenant.id,
                 idempotency_key=idempotency_key,
@@ -162,4 +165,3 @@ async def submit_email(
     await db.refresh(email_to_return)
 
     return email_to_return
-

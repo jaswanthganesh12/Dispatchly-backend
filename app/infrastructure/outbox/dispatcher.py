@@ -1,16 +1,13 @@
 
 from datetime import timedelta
-from uuid import UUID,uuid4
-import asyncio
+from uuid import UUID, uuid4
 
-from sqlalchemy import update
-
-from app.infrastructure.queue.celery_app import celery_app
-
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 
 from app.db.models import OutboxEvent
 from app.db.session import AsyncSessionLocal
+from app.infrastructure.streams.client import create_redis_client
+from app.infrastructure.streams.publisher import publish_email_event
 
 
 async def claim_pending_events(
@@ -25,8 +22,6 @@ async def claim_pending_events(
 
     async with AsyncSessionLocal() as session:
         async with session.begin():
-
-            
             db_now = await session.scalar(select(func.now()))
 
             lease_until = db_now + timedelta(
@@ -52,7 +47,6 @@ async def claim_pending_events(
             )
 
             result = await session.execute(query)
-
             events = result.scalars().all()
 
             for event in events:
@@ -78,69 +72,83 @@ async def publish_claimed_events(
     published = 0
     failed = 0
 
-    for event in events:
-        event_id = UUID(event["id"])
-        dispatcher_id = event["dispatcher_id"]
-        email_id = event["payload"]["email_id"]
+    redis = create_redis_client()
 
-        try:
-            # Publish the Celery task to Redis.
-            await asyncio.to_thread(
-                celery_app.send_task,
-                "dispatchly.process_email",
-                args=[email_id],
-                task_id=str(event_id),
-            )
+    try:
+        for event in events:
+            event_id = UUID(event["id"])
+            dispatcher_id = event["dispatcher_id"]
 
-            # Mark the event as published only if we still own it.
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    result = await session.execute(
-                        update(OutboxEvent)
-                        .where(
-                            OutboxEvent.id == event_id,
-                            OutboxEvent.locked_by == dispatcher_id,
-                            OutboxEvent.published_at.is_(None),
+            try:
+                payload = event["payload"]
+
+                email_id = payload["email_id"]
+                tenant_id = payload["tenant_id"]
+
+             
+                priority = payload.get("priority", 5)
+
+                await publish_email_event(
+                    redis,
+                    outbox_event_id=str(event_id),
+                    email_id=email_id,
+                    tenant_id=tenant_id,
+                    priority=priority,
+                )
+
+           
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        result = await session.execute(
+                            update(OutboxEvent)
+                            .where(
+                                OutboxEvent.id == event_id,
+                                OutboxEvent.locked_by == dispatcher_id,
+                                OutboxEvent.published_at.is_(None),
+                            )
+                            .values(
+                                published_at=func.now(),
+                                locked_by=None,
+                                locked_until=None,
+                                last_error=None,
+                            )
                         )
-                        .values(
-                            published_at=func.now(),
-                            locked_by=None,
-                            locked_until=None,
-                            last_error=None,
+
+                        if result.rowcount == 1:
+                            published += 1
+
+            except Exception as exc:
+                delay = min(2 ** event["attempts"], 300)
+
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        result = await session.execute(
+                            update(OutboxEvent)
+                            .where(
+                                OutboxEvent.id == event_id,
+                                OutboxEvent.locked_by == dispatcher_id,
+                                OutboxEvent.published_at.is_(None),
+                            )
+                            .values(
+                                available_at=(
+                                    func.now()
+                                    + timedelta(seconds=delay)
+                                ),
+                                locked_by=None,
+                                locked_until=None,
+                                last_error=str(exc)[:2000],
+                            )
                         )
-                    )
 
-                    if result.rowcount == 1:
-                        published += 1
+                        if result.rowcount == 1:
+                            failed += 1
 
-        except Exception as exc:
-            delay = min(2 ** event["attempts"], 300)
-
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    result = await session.execute(
-                        update(OutboxEvent)
-                        .where(
-                            OutboxEvent.id == event_id,
-                            OutboxEvent.locked_by == dispatcher_id,
-                            OutboxEvent.published_at.is_(None),
-                        )
-                        .values(
-                            available_at=(
-                                func.now()
-                                + timedelta(seconds=delay)
-                            ),
-                            locked_by=None,
-                            locked_until=None,
-                            last_error=str(exc)[:2000],
-                        )
-                    )
-
-                    if result.rowcount == 1:
-                        failed += 1
+    finally:
+        await redis.aclose()
 
     return {
         "published": published,
         "failed": failed,
     }
+
 
