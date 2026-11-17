@@ -1,9 +1,9 @@
-import uuid
-from sqlalchemy import CheckConstraint
 
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -21,27 +21,26 @@ from app.db.base import Base
 class Email(Base):
     __tablename__ = "emails"
 
-
     __table_args__ = (
-            CheckConstraint(
-                "status IN ('QUEUED', 'PROCESSING', 'SUBMITTED', "
-                "'RETRY', 'FAILED', 'DELIVERED', 'BOUNCED', "
-                "'COMPLAINED', 'CANCELLED')",
-                name="valid_status",
-            ),
-            CheckConstraint(
-                "priority BETWEEN 1 AND 10",
-                name="valid_priority",
-            ),
-            CheckConstraint(
-                "attempts >= 0",
-                name="non_negative_attempts",
-            ),
-            CheckConstraint(
-                "max_attempts > 0",
-                name="positive_max_attempts",
-            ),
-        )
+        CheckConstraint(
+            "status IN ('QUEUED', 'PROCESSING', 'SUBMITTED', "
+            "'RETRY', 'FAILED', 'DELIVERED', 'BOUNCED', "
+            "'COMPLAINED', 'CANCELLED')",
+            name="valid_status",
+        ),
+        CheckConstraint(
+            "priority BETWEEN 1 AND 10",
+            name="valid_priority",
+        ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="non_negative_attempts",
+        ),
+        CheckConstraint(
+            "max_attempts > 0",
+            name="positive_max_attempts",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -110,6 +109,22 @@ class Email(Base):
         nullable=True,
     )
 
+    processing_owner: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    processing_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -122,5 +137,6 @@ class Email(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
 
 

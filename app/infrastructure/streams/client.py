@@ -16,6 +16,8 @@ def create_redis_client() -> Redis:
         settings.REDIS_URL,
         decode_responses=True,
         health_check_interval=30,
+        socket_connect_timeout=5,
+        socket_timeout=15,
     )
 
 

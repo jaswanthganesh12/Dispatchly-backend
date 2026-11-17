@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     REDIS_URL: str
     TEST_DATABASE_URL: str
 
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "onboarding@resend.dev"
+    EMAIL_PROVIDER: str = "fake"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
