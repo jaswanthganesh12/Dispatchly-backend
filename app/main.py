@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.db.session import engine
 from app.api.routes.tenants import router as tenants_router
 from app.api.routes.emails import router as emails_router
+from app.api.routes.webhooks import router as webhooks_router
 
 
 settings = get_settings()
@@ -36,6 +37,7 @@ app = FastAPI(
 
 app.include_router(tenants_router)
 app.include_router(emails_router)
+app.include_router(webhooks_router, prefix="/v1")
 
 
 @app.get("/health", tags=["Health"])
